@@ -1,6 +1,11 @@
 angular.module('madisonApp.controllers')
-  .controller('AnnotationController', ['$scope', '$sce', '$http', 'annotationService', 'loginPopupService', 'growl', '$location', '$filter', '$timeout',
-    function ($scope, $sce, $http, annotationService, loginPopupService, growl, $location, $filter, $timeout) {
+  .controller('AnnotationController', ['$scope', '$sce', '$http',
+    'annotationService', 'loginPopupService', 'growl', '$location',
+    '$filter', '$timeout', '$anchorScroll',
+
+    function ($scope, $sce, $http, annotationService, loginPopupService, growl,
+      $location, $filter, $timeout, $anchorScroll) {
+
       $scope.annotations = [];
       $scope.annotationGroups = [];
       $scope.supported = null;
@@ -10,9 +15,71 @@ angular.module('madisonApp.controllers')
 
       //Parse sub-comment hash if there is one
       var hash = $location.hash();
-      var subCommentId = hash.match(/^annsubcomment_([0-9]+)$/);
-      if (subCommentId) {
-        $scope.subCommentId = subCommentId[1];
+
+      var annotationId = hash.match(ANNOTATION_HASH_REGEX);
+      var subCommentId = hash.match(ANNOTATION_COMMENT_HASH_REGEX);
+
+
+      if (annotationId || subCommentId) {
+        if (annotationId) $scope.annotationId = parseInt(annotationId[1]);
+        if (subCommentId) $scope.subCommentId = parseInt(subCommentId[1]);
+
+        $scope.$on('annotationsSet', function () {
+          var parentAnnotationId = annotationId ?
+            parseInt(annotationId[1]) : parentAnnotationIdFromComment(parseInt(subCommentId[1]));
+
+          openPanelForAnnotationId(parentAnnotationId);
+          if ($scope.subCommentId) scrollToAnnotationComment($scope.subCommentId);
+        });
+      }
+
+      function openPanelForAnnotationId(id) {
+        var group = findGroupFromAnnotationId(id);
+
+        if (!group) return;
+
+        $scope.showAnnotations(group);
+        $(document).scrollTop($('#annotation_' + id).offset().top - 50);
+      }
+
+      function scrollToAnnotationComment(commentId) {
+        var subCommentHash = 'annsubcomment_' + commentId;
+
+        // Have to wait for sidebar animation to complete before scrolling
+        $timeout(function() {
+          // Get difference of y position of annotation list and y position
+          // of annotation comment to know how much to scroll annotation window
+          var top = $('#' + subCommentHash).offset().top;
+          var annotationListTop = $('.annotation-list').offset().top;
+          $('.annotation-list').scrollTop(top - annotationListTop - 20);
+        }, 1500);
+      }
+
+      function parentAnnotationIdFromComment(commentId) {
+        var foundId;
+
+        angular.forEach($scope.annotations, function (annotation) {
+          var commentIds = annotation.comments.map(function (comment) {
+            return comment.id;
+          });
+          if (commentIds.indexOf(commentId) !== -1) foundId = annotation.id;
+        });
+
+        return foundId;
+      }
+
+      function findGroupFromAnnotationId(annotationId) {
+        var foundGroup;
+
+        angular.forEach($scope.annotationGroups, function (group) {
+          var idsInGroup = group.annotations.map(function (annotation)  {
+            return annotation.id;
+          });
+
+          if (idsInGroup.indexOf(annotationId) !== -1) foundGroup = group;
+        });
+
+        return foundGroup;
       }
 
       //Watch for annotationsUpdated broadcast
@@ -74,7 +141,7 @@ angular.module('madisonApp.controllers')
               //Then count the unique users for the responses to each annotation.
               for(var commentIndex in annotation.comments) {
                 var comment = annotation.comments[commentIndex];
-                annotation.comments[commentIndex].label = 'comment';
+                annotation.comments[commentIndex].label = 'annsubcomment';
                 annotation.comments[commentIndex].doc_id = annotation.doc_id;
                 if(annotationGroup.users.indexOf(comment.user.id) < 0) {
                   annotationGroup.users.push(comment.user.id);
@@ -166,9 +233,9 @@ angular.module('madisonApp.controllers')
       };
 
       $scope.activityOrder = function (activity) {
-        var popularity = activity.likes - activity.dislikes;
-
-        return popularity;
+        // Leaving this function in case we want to implement a more complex
+        // ordering algorithm in the future
+        return activity.likes;
       };
 
       $scope.addAction = function (activity, action, $event) {
@@ -176,7 +243,6 @@ angular.module('madisonApp.controllers')
           $http.post('/api/docs/' + $scope.doc.id + '/' + activity.label + 's/' + activity.id + '/' + action)
             .success(function (data) {
               activity.likes = data.likes;
-              activity.dislikes = data.dislikes;
               activity.flags = data.flags;
             }).error(function (data) {
               console.error(data);
